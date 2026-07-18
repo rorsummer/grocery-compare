@@ -1,6 +1,6 @@
 # 进度日志
 
-## 会话：2026-07-18
+## 会话：2026-07-18 (Session 1)
 
 ### 阶段 1-6：全部完成
 - **状态：** complete
@@ -13,6 +13,33 @@
 - **状态：** in_progress
 - Git 仓库已初始化并推送到 https://github.com/rorsummer/grocery-compare
 - 等待用户操作 Vercel 部署
+
+## 会话：2026-07-18 (Session 2)
+
+### 中英文搜索优化
+- **状态：** complete
+- 添加 relevanceScore() 函数：多词匹配 + 精确短语匹配
+- 修复中文搜索相关性：使用翻译后的英文关键词做匹配
+- 翻译库从 35 个品类扩展到 80+，包含 400+ 关键词
+- 添加英文→中文反向查找，支持 n-gram 部分匹配
+- 关键词上限 3 个，防止超时
+- 多词搜索零相关性过滤
+- 价格模式按相关性分层排序
+- 最佳匹配权重：价格 55% + 距离 30% + 相关性 15%
+
+### 测试结果（全部 PASS）
+| 测试 | 结果数 | 顶部结果 | 相关性 |
+|------|-------|---------|--------|
+| 奶粉 | 39 | anchor milk powder instant $10.49 | rel=1.2 |
+| 酱油 | 36 | Delicous Light Soy Cooking Sauce $1.99 | rel=1.0 |
+| 巧克力 | 96 | anchor calci yum flavoured milk chocolate | rel=1.1 |
+| 洗发水 | 82 | Fruits Wild Berry Shampoo | rel=1.1 |
+| 方便面 | 59 | choice instant noodles chicken cup | rel=1.2 |
+| 牛油果 | 40 | Avocado | rel=1.1 |
+
+### 构建验证
+- npm run build: PASS (Compiled successfully, Next.js 15.5.20)
+- Git push: dc236d9 推送到 master
 
 ## 项目结构
 ```

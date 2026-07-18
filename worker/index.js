@@ -2,10 +2,6 @@
  * Foodstuffs Token Proxy — Cloudflare Worker
  *
  * Deploy: npx wrangler deploy
- *
- * This worker runs on Cloudflare's network. Cloudflare-protected sites
- * (paknsave.co.nz, newworld.co.nz) do NOT challenge requests from
- * Cloudflare's own IPs, so we can reliably extract the guest token.
  */
 
 const UA =
@@ -15,12 +11,12 @@ export default {
   async fetch(request) {
     const url = new URL(request.url);
     const origin = url.searchParams.get('origin');
+    const debug = url.searchParams.has('debug');
 
     if (!origin) {
       return new Response('Missing ?origin=', { status: 400 });
     }
 
-    // Only allow Foodstuffs origins
     if (!origin.startsWith('https://www.paknsave.co.nz') &&
         !origin.startsWith('https://www.newworld.co.nz')) {
       return new Response('Invalid origin', { status: 403 });
@@ -33,10 +29,22 @@ export default {
           'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
           'Accept-Language': 'en-NZ,en;q=0.9',
         },
-        redirect: 'manual',
+        redirect: 'follow',
       });
 
       const setCookie = res.headers.get('set-cookie');
+
+      if (debug) {
+        return new Response(JSON.stringify({
+          status: res.status,
+          hasSetCookie: !!setCookie,
+          cookiePreview: setCookie ? setCookie.slice(0, 500) : null,
+          bodyPreview: (await res.text()).slice(0, 500),
+        }, null, 2), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
       if (!setCookie) {
         return new Response('No set-cookie header', { status: 502 });
       }

@@ -46,5 +46,18 @@ export async function GET() {
   results.platform = process.platform;
   results.cwd = process.cwd();
 
+  // 5. Check env var and Worker
+  results.hasWorkerEnv = !!process.env.FOODSTUFFS_WORKER_URL;
+  results.workerUrl = process.env.FOODSTUFFS_WORKER_URL || '(not set)';
+  try {
+    const res = await fetch(`${process.env.FOODSTUFFS_WORKER_URL}?origin=https://www.paknsave.co.nz`, {
+      signal: AbortSignal.timeout(10000),
+    });
+    results.workerStatus = res.status;
+    results.workerBody = (await res.text()).slice(0, 100);
+  } catch (e) {
+    results.workerError = e instanceof Error ? e.message : String(e);
+  }
+
   return NextResponse.json(results);
 }

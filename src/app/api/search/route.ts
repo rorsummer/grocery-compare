@@ -3,25 +3,55 @@ import { getSearchKeywords } from '@/data/translations';
 import { getNearestByBrand } from '@/data/stores';
 import { searchCountdown, searchPaknsave, searchNewWorld, Product } from '@/lib/scrapers';
 
-function bestScore(products: Product[], userLat: number, userLng: number): Product[] {
+/** Score how well a product name matches the user's original query */
+function relevanceScore(productName: string, rawQuery: string): number {
+  const name = productName.toLowerCase();
+  const q = rawQuery.trim().toLowerCase();
+  if (!q) return 1;
+
+  const queryWords = q.split(/\s+/);
+
+  // Exact phrase match — strongest signal
+  if (name.includes(q)) return 1.0 + queryWords.length * 0.1;
+
+  // Count how many query words appear in the name
+  let matched = 0;
+  for (const w of queryWords) {
+    if (w.length <= 2) continue; // skip tiny words like "of", "in"
+    if (name.includes(w)) matched++;
+  }
+
+  // If none of the substantive words matched, this is a poor result
+  if (matched === 0) return 0;
+
+  // Higher score for matching more words
+  return matched / queryWords.length;
+}
+
+function bestScore(
+  products: (Product & { relevance?: number })[],
+  userLat: number,
+  userLng: number
+): (Product & { distance?: number; score?: number })[] {
   const brandDist = getNearestByBrand(userLat, userLng);
 
-  // 给每个商品附加到最近同品牌门店的距离
   const withDist = products.map((p) => {
     const d = brandDist.get(p.brand);
     return { ...p, distance: d !== undefined ? d : 99 };
   });
 
-  // 归一化
   const prices = withDist.map((p) => p.price);
   const dists = withDist.map((p) => p.distance);
   const maxPrice = Math.max(...prices, 1);
   const maxDist = Math.max(...dists, 1);
 
-  // 加权评分：价格权重 60%，距离权重 40%
+  // 价格 55%、距离 30%、相关性 15%
   const scored = withDist.map((p) => ({
     ...p,
-    score: (p.price / maxPrice) * 0.6 + (p.distance / maxDist) * 0.4,
+    score:
+      (p.price / maxPrice) * 0.55 +
+      (p.distance / maxDist) * 0.30 +
+      (1 - (p.relevance || 0)) * 0.15,
   }));
 
   scored.sort((a, b) => a.score - b.score);
@@ -38,11 +68,18 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: '请输入搜索词' }, { status: 400 });
   }
 
-  const keywords = getSearchKeywords(keyword.trim());
+  const rawQuery = keyword.trim();
+  const keywords = getSearchKeywords(rawQuery);
+
+  // 用于相关性匹配：中文输入用翻译后的英文关键词，英文用原文
+  const matchQuery = keywords[0] || rawQuery.toLowerCase();
+
+  // 限制关键词数量，避免请求过多超时
+  const searchKeywords = keywords.slice(0, 3);
 
   const allResults: Product[] = [];
 
-  for (const kw of keywords) {
+  for (const kw of searchKeywords) {
     const [cd, pns, nw] = await Promise.all([
       searchCountdown(kw),
       searchPaknsave(kw),
@@ -51,14 +88,21 @@ export async function GET(request: NextRequest) {
     allResults.push(...cd, ...pns, ...nw);
   }
 
-  // 去重
+  // 去重 + 计算相关性
   const seen = new Set<string>();
-  let unique: (Product & { distance?: number; score?: number })[] = [];
+  let unique: (Product & { relevance?: number; distance?: number; score?: number })[] = [];
+
   for (const item of allResults) {
     const key = `${item.name}-${item.store}`.toLowerCase();
     if (!seen.has(key) && item.price > 0) {
       seen.add(key);
-      unique.push({ ...item });
+      const rel = relevanceScore(item.name, matchQuery);
+
+      // 多词搜索时，过滤掉完全不相关的
+      const wordCount = matchQuery.split(/\s+/).length;
+      if (wordCount >= 2 && rel === 0) continue;
+
+      unique.push({ ...item, relevance: rel });
     }
   }
 
@@ -68,12 +112,19 @@ export async function GET(request: NextRequest) {
 
   if (sort === 'best' && userLat !== null && userLng !== null) {
     unique = bestScore(unique, userLat, userLng);
-  } else {
-    unique.sort((a, b) => a.price - b.price);
+  } else if (sort === 'price') {
+    // 价格模式：先按相关性分层，再按价格排
+    unique.sort((a, b) => {
+      // 高相关性的优先展示
+      const relDiff = (b.relevance || 0) - (a.relevance || 0);
+      if (Math.abs(relDiff) > 0.3) return relDiff;
+      return a.price - b.price;
+    });
   }
 
   return NextResponse.json({
-    keyword,
+    keyword: rawQuery,
+    keywords: keywords.slice(0, 5),
     sort,
     results: unique.slice(0, 24),
     total: unique.length,

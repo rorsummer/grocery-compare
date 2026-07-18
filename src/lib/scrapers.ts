@@ -1,8 +1,8 @@
-import { execFile } from 'child_process';
+import { exec } from 'child_process';
 import { promisify } from 'util';
-import { devNull } from 'os';
+import * as https from 'https';
 
-const execFileAsync = promisify(execFile);
+const execAsync = promisify(exec);
 
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36';
@@ -26,46 +26,99 @@ function jwtExpMs(token: string): number {
   return Date.now() + 25 * 60_000;
 }
 
+/** Extract fs-user-token from a homepage response via Node.js https (fallback when curl unavailable) */
+function fetchTokenViaHttps(origin: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const u = new URL(origin);
+    const req = https.request(
+      {
+        hostname: u.hostname,
+        path: '/',
+        method: 'GET',
+        headers: {
+          'User-Agent': UA,
+          Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'en-NZ,en;q=0.9',
+        },
+        ciphers: [
+          'TLS_AES_128_GCM_SHA256',
+          'TLS_AES_256_GCM_SHA384',
+          'TLS_CHACHA20_POLY1305_SHA256',
+          'ECDHE-ECDSA-AES128-GCM-SHA256',
+          'ECDHE-RSA-AES128-GCM-SHA256',
+          'ECDHE-ECDSA-AES256-GCM-SHA384',
+          'ECDHE-RSA-AES256-GCM-SHA384',
+        ].join(':'),
+        honorCipherOrder: true,
+        minVersion: 'TLSv1.2',
+      },
+      (res) => {
+        const raw = res.headers['set-cookie'];
+        if (!raw) {
+          reject(new Error('No set-cookie header'));
+          return;
+        }
+        const cookies = Array.isArray(raw) ? raw.join(';') : raw;
+        const m = cookies.match(/fs-user-token=([^;]+)/);
+        if (m) resolve(m[1]);
+        else reject(new Error(`No fs-user-token cookie from ${origin}`));
+      },
+    );
+    req.on('error', reject);
+    req.setTimeout(15000, () => {
+      req.destroy();
+      reject(new Error('https request timeout'));
+    });
+    req.end();
+  });
+}
+
 async function mintGuestToken(origin: string, label: string): Promise<string> {
   const cached = tokenCache[label];
   if (cached && cached.expEpochMs - Date.now() > 60_000) {
     return cached.token;
   }
 
-  // Retry once on failure (curl can fail intermittently on Windows)
+  // Strategy 1: curl via shell (works on Windows with browser headers)
+  const cmd =
+    `curl -s -D - -o /dev/null --max-time 20 ` +
+    `-H "User-Agent: ${UA}" ` +
+    `-H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" ` +
+    `-H "Accept-Language: en-NZ,en;q=0.9" ` +
+    `"${origin}/"`;
+
   let lastErr: unknown;
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      const { stdout } = await execFileAsync(
-        'curl',
-        [
-          '-s', '-D', '-', '-o', devNull,
-          '--max-time', '20',
-          '-H', `User-Agent: ${UA}`,
-          '-H', 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-          '-H', 'Accept-Language: en-NZ,en;q=0.9',
-          origin + '/',
-        ],
-        { maxBuffer: 4 * 1024 * 1024, timeout: 25000 }
-      );
+      const { stdout } = await execAsync(cmd, {
+        maxBuffer: 4 * 1024 * 1024,
+        timeout: 25000,
+      });
       const m = stdout.match(/set-cookie:\s*fs-user-token=([^;]+)/i);
-      if (!m) {
-        throw new Error(`No fs-user-token cookie from ${origin}`);
+      if (m) {
+        const token = m[1];
+        tokenCache[label] = { token, expEpochMs: jwtExpMs(token) };
+        return token;
       }
-      const token = m[1];
-      tokenCache[label] = { token, expEpochMs: jwtExpMs(token) };
-      return token;
+      lastErr = new Error(`No fs-user-token from ${origin}`);
     } catch (err) {
       lastErr = err;
-      if (attempt === 0) {
-        // Small delay before retry
-        await new Promise((r) => setTimeout(r, 500));
-      }
+      if (attempt === 0) await new Promise((r) => setTimeout(r, 500));
     }
   }
-  const reason = lastErr instanceof Error ? (lastErr as Error).message : String(lastErr);
-  console.error(`[${label}] guest token failed after 2 attempts: ${reason}`);
-  throw lastErr;
+  console.error(`[${label}] curl failed: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`);
+
+  // Strategy 2: Node.js https fallback (for environments without curl, e.g. Vercel)
+  try {
+    const token = await fetchTokenViaHttps(origin);
+    tokenCache[label] = { token, expEpochMs: jwtExpMs(token) };
+    console.error(`[${label}] https fallback succeeded`);
+    return token;
+  } catch (httpsErr) {
+    const reason = httpsErr instanceof Error ? httpsErr.message : String(httpsErr);
+    console.error(`[${label}] https fallback also failed: ${reason}`);
+    throw httpsErr;
+  }
 }
 
 // --- Product types ---

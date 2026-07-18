@@ -79,7 +79,28 @@ async function mintGuestToken(origin: string, label: string): Promise<string> {
     return cached.token;
   }
 
-  // Strategy 1: curl via shell (works on Windows with browser headers)
+  // Strategy 1: Cloudflare Worker proxy (bypasses Cloudflare challenge on Vercel)
+  // Set FOODSTUFFS_WORKER_URL env var on Vercel to the deployed worker URL
+  const workerUrl = process.env.FOODSTUFFS_WORKER_URL;
+  if (workerUrl) {
+    try {
+      const res = await fetch(`${workerUrl}?origin=${encodeURIComponent(origin)}`, {
+        signal: AbortSignal.timeout(12000),
+      });
+      if (res.ok) {
+        const token = (await res.text()).trim();
+        if (token && token.length > 20) {
+          tokenCache[label] = { token, expEpochMs: jwtExpMs(token) };
+          return token;
+        }
+      }
+      console.error(`[${label}] worker returned ${res.status}`);
+    } catch (err) {
+      console.error(`[${label}] worker failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  // Strategy 2: curl via shell (works on local Windows)
   const cmd =
     `curl -s -D - -o /dev/null --max-time 20 ` +
     `-H "User-Agent: ${UA}" ` +
@@ -108,7 +129,7 @@ async function mintGuestToken(origin: string, label: string): Promise<string> {
   }
   console.error(`[${label}] curl failed: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`);
 
-  // Strategy 2: Node.js https fallback (for environments without curl, e.g. Vercel)
+  // Strategy 3: Node.js https (last resort, gets 403 on most IPs)
   try {
     const token = await fetchTokenViaHttps(origin);
     tokenCache[label] = { token, expEpochMs: jwtExpMs(token) };
@@ -116,7 +137,7 @@ async function mintGuestToken(origin: string, label: string): Promise<string> {
     return token;
   } catch (httpsErr) {
     const reason = httpsErr instanceof Error ? httpsErr.message : String(httpsErr);
-    console.error(`[${label}] https fallback also failed: ${reason}`);
+    console.error(`[${label}] all strategies failed: ${reason}`);
     throw httpsErr;
   }
 }

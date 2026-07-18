@@ -10,15 +10,23 @@ function relevanceScore(productName: string, rawQuery: string): number {
   if (!q) return 1;
 
   const queryWords = q.split(/\s+/);
+  // Split name into tokens for word-boundary matching
+  const nameWords = name.split(/[\s,.\-()/]+/).filter(Boolean);
 
-  // Exact phrase match — strongest signal
-  if (name.includes(q)) return 1.0 + queryWords.length * 0.1;
+  // Exact phrase match — only if the phrase appears at word boundaries
+  const idx = name.indexOf(q);
+  if (idx >= 0) {
+    const before = idx === 0 || /[\s,.\-()/]/.test(name[idx - 1]);
+    const end = idx + q.length;
+    const after = end === name.length || /[\s,.\-()/]/.test(name[end]);
+    if (before && after) return 1.0 + queryWords.length * 0.1;
+  }
 
-  // Count how many query words appear in the name
+  // Count exact word-boundary matches
   let matched = 0;
   for (const w of queryWords) {
     if (w.length <= 2) continue; // skip tiny words like "of", "in"
-    if (name.includes(w)) matched++;
+    if (nameWords.some((nw) => nw === w)) matched++;
   }
 
   // If none of the substantive words matched, this is a poor result
@@ -78,6 +86,7 @@ export async function GET(request: NextRequest) {
   const searchKeywords = keywords.slice(0, 3);
 
   const allResults: Product[] = [];
+  const apiErrors: string[] = [];
 
   for (const kw of searchKeywords) {
     const [cd, pns, nw] = await Promise.all([
@@ -86,6 +95,15 @@ export async function GET(request: NextRequest) {
       searchNewWorld(kw),
     ]);
     allResults.push(...cd, ...pns, ...nw);
+
+    // Track per-keyword which APIs returned empty
+    if (cd.length === 0 && pns.length === 0 && nw.length === 0) {
+      apiErrors.push(`keyword "${kw}" returned 0 results from all stores`);
+    } else {
+      if (cd.length === 0) apiErrors.push(`Woolworths: 0 results for "${kw}"`);
+      if (pns.length === 0) apiErrors.push(`Pak'nSave: 0 results for "${kw}"`);
+      if (nw.length === 0) apiErrors.push(`New World: 0 results for "${kw}"`);
+    }
   }
 
   // 去重 + 计算相关性
@@ -98,9 +116,8 @@ export async function GET(request: NextRequest) {
       seen.add(key);
       const rel = relevanceScore(item.name, matchQuery);
 
-      // 多词搜索时，过滤掉完全不相关的
-      const wordCount = matchQuery.split(/\s+/).length;
-      if (wordCount >= 2 && rel === 0) continue;
+      // 零相关性结果一律过滤：搜索词未命中任何词语边界
+      if (rel === 0) continue;
 
       unique.push({ ...item, relevance: rel });
     }
@@ -128,5 +145,6 @@ export async function GET(request: NextRequest) {
     sort,
     results: unique.slice(0, 24),
     total: unique.length,
+    apiErrors: apiErrors.length > 0 ? apiErrors : undefined,
   });
 }

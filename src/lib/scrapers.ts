@@ -32,24 +32,33 @@ async function mintGuestToken(origin: string, label: string): Promise<string> {
     return cached.token;
   }
 
-  try {
-    const { stdout } = await execFileAsync(
-      'curl',
-      ['-s', '-D', '-', '-o', devNull, '--max-time', '20', '-H', `User-Agent: ${UA}`, origin + '/'],
-      { maxBuffer: 4 * 1024 * 1024, timeout: 25000 }
-    );
-    const m = stdout.match(/set-cookie:\s*fs-user-token=([^;]+)/i);
-    if (!m) {
-      throw new Error(`No fs-user-token cookie from ${origin}`);
+  // Retry once on failure (curl can fail intermittently on Windows)
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const { stdout } = await execFileAsync(
+        'curl',
+        ['-s', '-D', '-', '-o', devNull, '--max-time', '20', '-H', `User-Agent: ${UA}`, origin + '/'],
+        { maxBuffer: 4 * 1024 * 1024, timeout: 25000 }
+      );
+      const m = stdout.match(/set-cookie:\s*fs-user-token=([^;]+)/i);
+      if (!m) {
+        throw new Error(`No fs-user-token cookie from ${origin}`);
+      }
+      const token = m[1];
+      tokenCache[label] = { token, expEpochMs: jwtExpMs(token) };
+      return token;
+    } catch (err) {
+      lastErr = err;
+      if (attempt === 0) {
+        // Small delay before retry
+        await new Promise((r) => setTimeout(r, 500));
+      }
     }
-    const token = m[1];
-    tokenCache[label] = { token, expEpochMs: jwtExpMs(token) };
-    return token;
-  } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err);
-    console.error(`[${label}] guest token failed: ${reason}`);
-    throw err;
   }
+  const reason = lastErr instanceof Error ? (lastErr as Error).message : String(lastErr);
+  console.error(`[${label}] guest token failed after 2 attempts: ${reason}`);
+  throw lastErr;
 }
 
 // --- Product types ---

@@ -8,5 +8,4 @@ RUN npm install
 COPY . .
 RUN npm run build
 
-EXPOSE 3000
-CMD npx next start --port 3000
+CMD npx next start --hostname 0.0.0.0

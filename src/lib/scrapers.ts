@@ -38,7 +38,15 @@ async function mintGuestToken(origin: string, label: string): Promise<string> {
     try {
       const { stdout } = await execFileAsync(
         'curl',
-        ['-s', '-D', '-', '-o', devNull, '--max-time', '20', '-H', `User-Agent: ${UA}`, origin + '/'],
+        [
+          '-s', '-D', '-', '-o', devNull,
+          '--max-time', '20',
+          '--tlsv1.3',
+          '-H', `User-Agent: ${UA}`,
+          '-H', 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          '-H', 'Accept-Language: en-NZ,en;q=0.9',
+          origin + '/',
+        ],
         { maxBuffer: 4 * 1024 * 1024, timeout: 25000 }
       );
       const m = stdout.match(/set-cookie:\s*fs-user-token=([^;]+)/i);

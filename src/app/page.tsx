@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback } from 'react';
 import { getNearbyStores, Store } from '@/data/stores';
 
 interface Product {
@@ -10,9 +10,12 @@ interface Product {
   brand: string;
   image: string;
   link: string;
+  distance?: number;
+  score?: number;
 }
 
 type Lang = 'zh' | 'en';
+type SortMode = 'price' | 'best';
 
 const texts: Record<Lang, {
   title: string;
@@ -22,33 +25,41 @@ const texts: Record<Lang, {
   searching: string;
   noResults: string;
   error: string;
-  priceLowToHigh: string;
+  priceSort: string;
+  bestSort: string;
+  priceSortDesc: string;
+  bestSortDesc: string;
   poweredBy: string;
-  locationHint: string;
   enableLocation: string;
   locating: string;
   locationDenied: string;
   nearbyStores: string;
   km: string;
+  away: string;
   resultCount: string;
+  needLocation: string;
 }> = {
   zh: {
     title: '奥克兰超市比价',
     subtitle: '搜索商品，找到最便宜的价格',
     placeholder: '输入商品名称，如：牛奶、eggs、rice...',
     search: '搜索',
-    searching: '正在搜索...',
+    searching: '搜索中...',
     noResults: '没有找到结果，试试其他关键词',
     error: '搜索出错，请稍后重试',
-    priceLowToHigh: '按价格从低到高排列',
+    priceSort: '价格优先',
+    bestSort: '最佳匹配',
+    priceSortDesc: '按价格从低到高排列',
+    bestSortDesc: '综合价格与距离排序',
     poweredBy: '数据来源：Woolworths、Pak\'nSave、New World',
-    locationHint: '开启定位可查看附近超市',
-    enableLocation: '定位',
+    enableLocation: '📍 定位',
     locating: '定位中...',
-    locationDenied: '无法获取位置，请允许定位权限',
+    locationDenied: '无法获取位置',
     nearbyStores: '附近超市',
     km: '公里',
+    away: '距离',
     resultCount: '共 {count} 个结果',
+    needLocation: '开启定位可用最佳匹配排序',
   },
   en: {
     title: 'Auckland Grocery Compare',
@@ -58,15 +69,19 @@ const texts: Record<Lang, {
     searching: 'Searching...',
     noResults: 'No results found, try another keyword',
     error: 'Search failed, please try again',
-    priceLowToHigh: 'Sorted by price: low to high',
+    priceSort: 'Price',
+    bestSort: 'Best Match',
+    priceSortDesc: 'Sorted by price: low to high',
+    bestSortDesc: 'Weighted by price & distance',
     poweredBy: 'Data from: Woolworths, Pak\'nSave, New World',
-    locationHint: 'Enable location to see nearby stores',
-    enableLocation: 'Locate',
+    enableLocation: '📍 Locate',
     locating: 'Locating...',
-    locationDenied: 'Location unavailable, please allow access',
+    locationDenied: 'Location unavailable',
     nearbyStores: 'Nearby Stores',
     km: 'km',
+    away: 'away',
     resultCount: '{count} results',
+    needLocation: 'Enable location for best match sorting',
   },
 };
 
@@ -75,13 +90,8 @@ const brandColors: Record<string, string> = {
   paknsave: 'bg-yellow-100 text-yellow-800',
   newworld: 'bg-red-100 text-red-800',
   chinese: 'bg-orange-100 text-orange-800',
-};
-
-const brandIcons: Record<string, string> = {
-  paknsave: '🟡',
-  countdown: '🟢',
-  newworld: '🔴',
-  chinese: '🟠',
+  asian: 'bg-pink-100 text-pink-800',
+  convenience: 'bg-blue-100 text-blue-800',
 };
 
 export default function Home() {
@@ -95,6 +105,7 @@ export default function Home() {
   const [locating, setLocating] = useState(false);
   const [locError, setLocError] = useState('');
   const [nearbyStores, setNearbyStores] = useState<(Store & { distance: number })[]>([]);
+  const [sortMode, setSortMode] = useState<SortMode>('price');
 
   const t = texts[lang];
 
@@ -112,6 +123,8 @@ export default function Home() {
         setLocating(false);
         const nearby = getNearbyStores(loc.lat, loc.lng, 15);
         setNearbyStores(nearby.slice(0, 10));
+        // 有定位后自动切到最佳匹配
+        setSortMode('best');
       },
       () => {
         setLocError(t.locationDenied);
@@ -129,7 +142,7 @@ export default function Home() {
     setError('');
 
     try {
-      let url = `/api/search?q=${encodeURIComponent(q)}`;
+      let url = `/api/search?q=${encodeURIComponent(q)}&sort=${sortMode}`;
       if (userLoc) {
         url += `&lat=${userLoc.lat}&lng=${userLoc.lng}`;
       }
@@ -145,7 +158,7 @@ export default function Home() {
       setError(t.error);
     }
     setLoading(false);
-  }, [query, userLoc, t.error]);
+  }, [query, sortMode, userLoc, t.error]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') handleSearch();
@@ -199,22 +212,53 @@ export default function Home() {
           </button>
         </div>
 
-        {/* Location error */}
-        {locError && (
-          <p className="text-xs text-red-500 text-center mb-4">{locError}</p>
-        )}
+        {/* Sort toggle + location error */}
+        <div className="flex items-center gap-2 mb-4 flex-wrap">
+          <div className="inline-flex rounded-lg border border-gray-200 bg-white p-0.5">
+            <button
+              onClick={() => setSortMode('price')}
+              className={`text-xs px-3 py-1.5 rounded-md transition-colors ${
+                sortMode === 'price'
+                  ? 'bg-gray-800 text-white'
+                  : 'text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              {t.priceSort}
+            </button>
+            <button
+              onClick={() => {
+                if (!userLoc) {
+                  requestLocation();
+                  return;
+                }
+                setSortMode('best');
+              }}
+              className={`text-xs px-3 py-1.5 rounded-md transition-colors ${
+                sortMode === 'best'
+                  ? 'bg-gray-800 text-white'
+                  : 'text-gray-600 hover:text-gray-900'
+              }`}
+              title={!userLoc ? t.needLocation : ''}
+            >
+              {t.bestSort}
+            </button>
+          </div>
+          {locError && (
+            <span className="text-xs text-red-500">{locError}</span>
+          )}
+        </div>
 
         {/* Nearby stores */}
         {nearbyStores.length > 0 && !hasSearched && (
           <div className="mb-6">
             <p className="text-sm font-medium text-gray-500 mb-2">{t.nearbyStores}</p>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-1.5">
               {nearbyStores.map((store) => (
                 <span
                   key={store.name}
                   className={`text-xs px-2.5 py-1 rounded-full border ${brandColors[store.brand] || 'bg-gray-100 text-gray-600'}`}
                 >
-                  {brandIcons[store.brand] || ''} {store.name} {store.distance}{t.km}
+                  {store.name} · {store.distance}{t.km}
                 </span>
               ))}
             </div>
@@ -244,7 +288,8 @@ export default function Home() {
         {!loading && results.length > 0 && (
           <div>
             <p className="text-sm text-gray-400 mb-3">
-              {t.resultCount.replace('{count}', String(results.length))} &middot; {t.priceLowToHigh}
+              {t.resultCount.replace('{count}', String(results.length))}
+              &middot; {sortMode === 'price' ? t.priceSortDesc : t.bestSortDesc}
             </p>
             <div className="space-y-3">
               {results.map((item, index) => (
@@ -274,11 +319,23 @@ export default function Home() {
                         <span className={`inline-block text-xs px-2 py-0.5 rounded-full ${brandColors[item.brand] || 'bg-gray-100 text-gray-600'}`}>
                           {item.store}
                         </span>
+                        {item.distance !== undefined && (
+                          <span className="text-xs text-gray-400">
+                            ~{item.distance}{t.km} {t.away}
+                          </span>
+                        )}
                       </div>
                     </div>
-                    <p className="text-xl font-bold text-green-700 whitespace-nowrap">
-                      ${item.price.toFixed(2)}
-                    </p>
+                    <div className="text-right flex-shrink-0">
+                      <p className="text-xl font-bold text-green-700">
+                        ${item.price.toFixed(2)}
+                      </p>
+                      {item.score !== undefined && (
+                        <p className="text-xs text-gray-400">
+                          {Math.round(item.score * 100)}分
+                        </p>
+                      )}
+                    </div>
                   </div>
                 </a>
               ))}

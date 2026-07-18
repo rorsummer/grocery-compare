@@ -45,16 +45,16 @@ function bestScore(
   const maxPrice = Math.max(...prices, 1);
   const maxDist = Math.max(...dists, 1);
 
-  // 价格 55%、距离 30%、相关性 15%
+  // 价格 55%、距离 30%、相关性 15%（分数越高越好）
   const scored = withDist.map((p) => ({
     ...p,
     score:
-      (p.price / maxPrice) * 0.55 +
-      (p.distance / maxDist) * 0.30 +
-      (1 - (p.relevance || 0)) * 0.15,
+      (1 - p.price / maxPrice) * 0.55 +
+      (1 - p.distance / maxDist) * 0.30 +
+      (p.relevance || 0) * 0.15,
   }));
 
-  scored.sort((a, b) => a.score - b.score);
+  scored.sort((a, b) => b.score - a.score);
   return scored;
 }
 

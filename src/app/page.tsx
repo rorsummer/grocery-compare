@@ -1,7 +1,16 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { getNearbyStores } from '@/data/stores';
+import {
+  getRecordBook,
+  addToRecordBook,
+  removeFromRecordBook,
+  clearRecordBook,
+  isInRecordBook,
+  getRecommendation,
+  type RecordItem,
+} from '@/lib/shopping-list';
 
 interface Product {
   name: string;
@@ -39,6 +48,17 @@ const T = {
     away: '距离',
     resultCount: '共 {count} 个结果',
     needLocation: '开启定位可用最佳匹配排序',
+    recordBook: '📒 记录册',
+    addToBook: '加入记录册',
+    removeFromBook: '从记录册移除',
+    emptyBook: '记录册是空的，搜索并添加商品吧',
+    recommendation: '推荐商场',
+    address: '地址',
+    budget: '预算',
+    travelTime: '前往方式',
+    clearAll: '清空记录',
+    min: '分钟',
+    close: '关闭',
   },
   en: {
     title: 'Auckland Grocery Compare',
@@ -61,6 +81,17 @@ const T = {
     away: 'away',
     resultCount: '{count} results',
     needLocation: 'Enable location for best match sorting',
+    recordBook: '📒 Record',
+    addToBook: 'Add to list',
+    removeFromBook: 'Remove from list',
+    emptyBook: 'Your record book is empty. Search and add items!',
+    recommendation: 'Recommended Store',
+    address: 'Address',
+    budget: 'Budget',
+    travelTime: 'Travel Options',
+    clearAll: 'Clear All',
+    min: 'min',
+    close: 'Close',
   },
 };
 
@@ -86,8 +117,18 @@ export default function Home() {
   const [nearbyStores, setNearbyStores] = useState<{ name: string; brand: string; distance: number }[]>([]);
   const [sortMode, setSortMode] = useState<SortMode>('price');
 
+  // Record book
+  const [recordBook, setRecordBook] = useState<RecordItem[]>([]);
+  const [showRecordBook, setShowRecordBook] = useState(false);
+
+  // Load record book from localStorage on mount
+  useEffect(() => {
+    setRecordBook(getRecordBook());
+  }, []);
+
   const t = T[lang];
 
+  // ---- Location ----
   const requestLocation = useCallback(() => {
     if (typeof navigator === 'undefined' || !navigator.geolocation) {
       setLocError(T[lang].locationDenied);
@@ -112,6 +153,7 @@ export default function Home() {
     );
   }, [lang]);
 
+  // ---- Search ----
   const doSearch = useCallback(async (searchQuery: string, mode: SortMode, loc: { lat: number; lng: number } | null) => {
     setLoading(true);
     setError('');
@@ -157,22 +199,60 @@ export default function Home() {
     }
   };
 
+  // ---- Record book ----
+  const handleToggleBookmark = (item: Product) => {
+    if (isInRecordBook(item.name, item.store)) {
+      const updated = removeFromRecordBook(item.name, item.store);
+      setRecordBook(updated);
+    } else {
+      const updated = addToRecordBook({
+        name: item.name,
+        price: item.price,
+        store: item.store,
+        brand: item.brand,
+        image: item.image,
+        link: item.link,
+      });
+      setRecordBook(updated);
+    }
+  };
+
+  const handleClearBook = () => {
+    clearRecordBook();
+    setRecordBook([]);
+  };
+
+  const recommendation = showRecordBook ? getRecommendation(userLoc?.lat ?? null, userLoc?.lng ?? null) : null;
+
   return (
     <main className="min-h-screen bg-gray-50">
       <div className="max-w-2xl mx-auto px-4 py-6">
         {/* Header */}
-        <div className="flex justify-between items-center mb-2">
-          <button
-            onClick={requestLocation}
-            disabled={locating}
-            className={`text-sm border rounded-full px-3 py-1.5 transition-colors ${
-              userLoc
-                ? 'bg-green-50 border-green-300 text-green-700'
-                : 'bg-white hover:bg-gray-100'
-            } disabled:opacity-50`}
-          >
-            {locating ? t.locating : userLoc ? '📍' : t.enableLocation}
-          </button>
+        <div className="flex justify-between items-center mb-2 gap-2">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={requestLocation}
+              disabled={locating}
+              className={`text-sm border rounded-full px-3 py-1.5 transition-colors ${
+                userLoc
+                  ? 'bg-green-50 border-green-300 text-green-700'
+                  : 'bg-white hover:bg-gray-100'
+              } disabled:opacity-50`}
+            >
+              {locating ? t.locating : userLoc ? '📍' : t.enableLocation}
+            </button>
+            <button
+              onClick={() => setShowRecordBook(true)}
+              className="text-sm border rounded-full px-3 py-1.5 transition-colors bg-white hover:bg-gray-100 relative"
+            >
+              {t.recordBook}
+              {recordBook.length > 0 && (
+                <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs w-5 h-5 rounded-full flex items-center justify-center">
+                  {recordBook.length}
+                </span>
+              )}
+            </button>
+          </div>
           <button
             onClick={() => setLang(l => l === 'zh' ? 'en' : 'zh')}
             className="text-sm bg-white border rounded-full px-4 py-1.5 hover:bg-gray-100 transition-colors"
@@ -279,53 +359,76 @@ export default function Home() {
               &middot; {sortMode === 'price' ? t.priceSortDesc : t.bestSortDesc}
             </p>
             <div className="space-y-3">
-              {results.map((item, index) => (
-                <a
-                  key={`${item.name}-${item.store}-${index}`}
-                  href={item.link}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="block bg-white rounded-xl p-4 shadow-sm hover:shadow-md transition-shadow border border-gray-100"
-                >
-                  <div className="flex items-center gap-4">
-                    {item.image ? (
-                      <img
-                        src={item.image}
-                        alt={item.name}
-                        className="w-16 h-16 object-contain rounded-lg bg-gray-50 flex-shrink-0"
-                        loading="lazy"
-                      />
-                    ) : (
-                      <div className="w-16 h-16 bg-gray-100 rounded-lg flex items-center justify-center text-gray-300 text-xs flex-shrink-0">
-                        暂无
-                      </div>
-                    )}
-                    <div className="flex-1 min-w-0">
-                      <p className="font-medium text-gray-900 truncate">{item.name}</p>
-                      <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-                        <span className={`inline-block text-xs px-2 py-0.5 rounded-full ${brandColors[item.brand] || 'bg-gray-100 text-gray-600'}`}>
-                          {item.store}
-                        </span>
-                        {item.distance !== undefined && (
-                          <span className="text-xs text-gray-400">
-                            ~{item.distance}{t.km} {t.away}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    <div className="text-right flex-shrink-0">
-                      <p className="text-xl font-bold text-green-700">
-                        ${item.price.toFixed(2)}
-                      </p>
-                      {item.score !== undefined && (
-                        <p className="text-xs text-gray-400">
-                          {Math.round(item.score * 100)}分
-                        </p>
+              {results.map((item, index) => {
+                const bookmarked = isInRecordBook(item.name, item.store);
+                return (
+                  <div
+                    key={`${item.name}-${item.store}-${index}`}
+                    className="block bg-white rounded-xl p-4 shadow-sm hover:shadow-md transition-shadow border border-gray-100 relative group"
+                  >
+                    <div className="flex items-center gap-4">
+                      {item.image ? (
+                        <img
+                          src={item.image}
+                          alt={item.name}
+                          className="w-16 h-16 object-contain rounded-lg bg-gray-50 flex-shrink-0"
+                          loading="lazy"
+                        />
+                      ) : (
+                        <div className="w-16 h-16 bg-gray-100 rounded-lg flex items-center justify-center text-gray-300 text-xs flex-shrink-0">
+                          暂无
+                        </div>
                       )}
+                      <div className="flex-1 min-w-0">
+                        <a
+                          href={item.link}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="font-medium text-gray-900 hover:text-green-700 transition-colors truncate block"
+                        >
+                          {item.name}
+                        </a>
+                        <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                          <span className={`inline-block text-xs px-2 py-0.5 rounded-full ${brandColors[item.brand] || 'bg-gray-100 text-gray-600'}`}>
+                            {item.store}
+                          </span>
+                          {item.distance !== undefined && (
+                            <span className="text-xs text-gray-400">
+                              ~{item.distance}{t.km} {t.away}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="text-right flex-shrink-0 flex items-center gap-2">
+                        <div>
+                          <p className="text-xl font-bold text-green-700">
+                            ${item.price.toFixed(2)}
+                          </p>
+                          {item.score !== undefined && (
+                            <p className="text-xs text-gray-400">
+                              {Math.round(item.score * 100)}分
+                            </p>
+                          )}
+                        </div>
+                        <button
+                          onClick={(e) => {
+                            e.preventDefault();
+                            handleToggleBookmark(item);
+                          }}
+                          className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-lg transition-all ${
+                            bookmarked
+                              ? 'bg-green-100 text-green-600 hover:bg-red-100 hover:text-red-500'
+                              : 'bg-gray-100 text-gray-400 hover:bg-green-100 hover:text-green-600'
+                          }`}
+                          title={bookmarked ? t.removeFromBook : t.addToBook}
+                        >
+                          {bookmarked ? '✓' : '+'}
+                        </button>
+                      </div>
                     </div>
                   </div>
-                </a>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}
@@ -345,6 +448,163 @@ export default function Home() {
           </div>
         )}
       </div>
+
+      {/* ============ Record Book Modal ============ */}
+      {showRecordBook && (
+        <div className="fixed inset-0 z-50 flex justify-end">
+          {/* Backdrop */}
+          <div
+            className="absolute inset-0 bg-black/30"
+            onClick={() => setShowRecordBook(false)}
+          />
+
+          {/* Panel */}
+          <div className="relative w-full max-w-md bg-white h-full overflow-y-auto shadow-2xl animate-slide-in">
+            {/* Header */}
+            <div className="sticky top-0 bg-white border-b z-10 px-5 py-4 flex items-center justify-between">
+              <h2 className="text-lg font-bold text-gray-900">
+                {t.recordBook}
+                {recordBook.length > 0 && (
+                  <span className="ml-2 text-sm text-gray-400 font-normal">
+                    ({recordBook.length})
+                  </span>
+                )}
+              </h2>
+              <button
+                onClick={() => setShowRecordBook(false)}
+                className="text-gray-400 hover:text-gray-600 text-sm"
+              >
+                ✕ {t.close}
+              </button>
+            </div>
+
+            <div className="px-5 py-4">
+              {/* Empty state */}
+              {recordBook.length === 0 && (
+                <div className="text-center py-12">
+                  <p className="text-4xl mb-3">📒</p>
+                  <p className="text-gray-400">{t.emptyBook}</p>
+                </div>
+              )}
+
+              {/* Items list */}
+              {recordBook.map((item) => (
+                <div
+                  key={`${item.name}-${item.store}`}
+                  className="flex items-center gap-3 py-3 border-b border-gray-50"
+                >
+                  {item.image ? (
+                    <img src={item.image} alt={item.name} className="w-12 h-12 object-contain rounded bg-gray-50 flex-shrink-0" />
+                  ) : (
+                    <div className="w-12 h-12 bg-gray-100 rounded flex items-center justify-center text-gray-300 text-xs flex-shrink-0" />
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-gray-900 truncate">{item.name}</p>
+                    <span className={`inline-block text-xs px-1.5 py-0.5 rounded-full mt-0.5 ${brandColors[item.brand] || 'bg-gray-100 text-gray-600'}`}>
+                      {item.store}
+                    </span>
+                  </div>
+                  <p className="text-sm font-bold text-green-700 flex-shrink-0">${item.price.toFixed(2)}</p>
+                  <button
+                    onClick={() => {
+                      const updated = removeFromRecordBook(item.name, item.store);
+                      setRecordBook(updated);
+                    }}
+                    className="text-gray-300 hover:text-red-400 text-sm flex-shrink-0"
+                    title={t.removeFromBook}
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+
+              {/* Budget */}
+              {recordBook.length > 0 && (
+                <div className="mt-4 p-3 bg-green-50 rounded-lg">
+                  <p className="text-sm text-green-700">
+                    {t.budget}: <span className="text-lg font-bold">${recordBook.reduce((s, i) => s + i.price, 0).toFixed(2)}</span>
+                  </p>
+                </div>
+              )}
+
+              {/* Recommendation */}
+              {recommendation && recommendation.allStores.length > 0 && (
+                <div className="mt-4 p-4 bg-blue-50 rounded-lg">
+                  <h3 className="text-sm font-bold text-blue-900 mb-3">
+                    🏪 {t.recommendation}
+                  </h3>
+                  <p className="text-base font-bold text-blue-800">
+                    {recommendation.topStore.name}
+                  </p>
+                  <p className="text-xs text-blue-600 mt-0.5">
+                    {t.address}: {recommendation.topStore.address}
+                  </p>
+                  <p className="text-xs text-blue-600 mt-0.5">
+                    已匹配 {recommendation.topStore.matchedItems.length}/{recordBook.length} 件商品
+                    &middot; 总计 ${recommendation.topStore.totalCost.toFixed(2)}
+                  </p>
+
+                  {/* Travel times */}
+                  {recommendation.travelEstimates.length > 0 && (
+                    <div className="mt-3 pt-3 border-t border-blue-200">
+                      <p className="text-xs font-medium text-blue-900 mb-2">{t.travelTime}:</p>
+                      <div className="grid grid-cols-2 gap-1.5">
+                        {recommendation.travelEstimates.map((est) => (
+                          <div key={est.mode} className="flex items-center gap-1.5 text-xs text-blue-700">
+                            <span>{est.icon}</span>
+                            <span>{est.label}</span>
+                            <span className="font-medium">{est.minutes}{t.min}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Other stores */}
+                  {recommendation.allStores.length > 1 && (
+                    <div className="mt-3 pt-3 border-t border-blue-200">
+                      <p className="text-xs text-blue-500 mb-1">其他可选商场:</p>
+                      {recommendation.allStores.slice(1, 4).map((s) => (
+                        <p key={s.name} className="text-xs text-blue-400">
+                          {s.name} · 匹配{s.matchedItems.length}件 · ${s.totalCost.toFixed(2)}
+                          {s.distanceKm < 99 ? ` · ${s.distanceKm.toFixed(1)}km` : ''}
+                        </p>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* User needs location for recommendation */}
+              {recordBook.length > 0 && !userLoc && (
+                <div className="mt-4 p-3 bg-yellow-50 rounded-lg text-center">
+                  <p className="text-sm text-yellow-700">
+                    {lang === 'zh'
+                      ? '开启定位后可查看推荐商场和前往方式'
+                      : 'Enable location to see store recommendations and travel options'}
+                  </p>
+                  <button
+                    onClick={requestLocation}
+                    className="mt-2 text-sm bg-yellow-200 hover:bg-yellow-300 text-yellow-800 px-4 py-1.5 rounded-full transition-colors"
+                  >
+                    {t.enableLocation}
+                  </button>
+                </div>
+              )}
+
+              {/* Clear all */}
+              {recordBook.length > 0 && (
+                <button
+                  onClick={handleClearBook}
+                  className="mt-4 w-full text-center text-sm text-red-400 hover:text-red-600 py-2 transition-colors"
+                >
+                  {t.clearAll}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

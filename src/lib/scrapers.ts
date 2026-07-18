@@ -41,7 +41,6 @@ async function mintGuestToken(origin: string, label: string): Promise<string> {
         [
           '-s', '-D', '-', '-o', devNull,
           '--max-time', '20',
-          '--tlsv1.3',
           '-H', `User-Agent: ${UA}`,
           '-H', 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
           '-H', 'Accept-Language: en-NZ,en;q=0.9',

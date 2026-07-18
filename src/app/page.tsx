@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useCallback } from 'react';
-import { getNearbyStores, Store } from '@/data/stores';
+import { getNearbyStores } from '@/data/stores';
 
 interface Product {
   name: string;
@@ -17,28 +17,7 @@ interface Product {
 type Lang = 'zh' | 'en';
 type SortMode = 'price' | 'best';
 
-const texts: Record<Lang, {
-  title: string;
-  subtitle: string;
-  placeholder: string;
-  search: string;
-  searching: string;
-  noResults: string;
-  error: string;
-  priceSort: string;
-  bestSort: string;
-  priceSortDesc: string;
-  bestSortDesc: string;
-  poweredBy: string;
-  enableLocation: string;
-  locating: string;
-  locationDenied: string;
-  nearbyStores: string;
-  km: string;
-  away: string;
-  resultCount: string;
-  needLocation: string;
-}> = {
+const T = {
   zh: {
     title: '奥克兰超市比价',
     subtitle: '搜索商品，找到最便宜的价格',
@@ -104,14 +83,14 @@ export default function Home() {
   const [userLoc, setUserLoc] = useState<{ lat: number; lng: number } | null>(null);
   const [locating, setLocating] = useState(false);
   const [locError, setLocError] = useState('');
-  const [nearbyStores, setNearbyStores] = useState<(Store & { distance: number })[]>([]);
+  const [nearbyStores, setNearbyStores] = useState<{ name: string; brand: string; distance: number }[]>([]);
   const [sortMode, setSortMode] = useState<SortMode>('price');
 
-  const t = texts[lang];
+  const t = T[lang];
 
   const requestLocation = useCallback(() => {
-    if (!navigator.geolocation) {
-      setLocError(t.locationDenied);
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      setLocError(T[lang].locationDenied);
       return;
     }
     setLocating(true);
@@ -122,46 +101,60 @@ export default function Home() {
         setUserLoc(loc);
         setLocating(false);
         const nearby = getNearbyStores(loc.lat, loc.lng, 15);
-        setNearbyStores(nearby.slice(0, 10));
-        // 有定位后自动切到最佳匹配
+        setNearbyStores(nearby.slice(0, 10).map(s => ({ name: s.name, brand: s.brand, distance: s.distance })));
         setSortMode('best');
       },
       () => {
-        setLocError(t.locationDenied);
+        setLocError(T[lang].locationDenied);
         setLocating(false);
       },
-      { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 }
+      { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 },
     );
-  }, [t.locationDenied]);
+  }, [lang]);
 
-  const handleSearch = useCallback(async () => {
-    const q = query.trim();
-    if (!q) return;
-
+  const doSearch = useCallback(async (searchQuery: string, mode: SortMode, loc: { lat: number; lng: number } | null) => {
     setLoading(true);
     setError('');
-
     try {
-      let url = `/api/search?q=${encodeURIComponent(q)}&sort=${sortMode}`;
-      if (userLoc) {
-        url += `&lat=${userLoc.lat}&lng=${userLoc.lng}`;
+      let url = `/api/search?q=${encodeURIComponent(searchQuery)}&sort=${mode}`;
+      if (loc) {
+        url += `&lat=${loc.lat}&lng=${loc.lng}`;
       }
       const res = await fetch(url);
       const data = await res.json();
       if (data.error) {
         setError(data.error);
+        setResults([]);
       } else {
         setResults(data.results || []);
         setHasSearched(true);
       }
     } catch {
-      setError(t.error);
+      setError(T[lang].error);
+      setResults([]);
     }
     setLoading(false);
-  }, [query, sortMode, userLoc, t.error]);
+  }, [lang]);
+
+  const handleSearch = () => {
+    const q = query.trim();
+    if (!q || loading) return;
+    doSearch(q, sortMode, userLoc);
+  };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') handleSearch();
+  };
+
+  const handleSortChange = (mode: SortMode) => {
+    if (mode === 'best' && !userLoc) {
+      requestLocation();
+      return;
+    }
+    setSortMode(mode);
+    if (query.trim()) {
+      doSearch(query.trim(), mode, userLoc);
+    }
   };
 
   return (
@@ -181,7 +174,7 @@ export default function Home() {
             {locating ? t.locating : userLoc ? '📍' : t.enableLocation}
           </button>
           <button
-            onClick={() => setLang(lang === 'zh' ? 'en' : 'zh')}
+            onClick={() => setLang(l => l === 'zh' ? 'en' : 'zh')}
             className="text-sm bg-white border rounded-full px-4 py-1.5 hover:bg-gray-100 transition-colors"
           >
             {lang === 'zh' ? 'English' : '中文'}
@@ -212,11 +205,11 @@ export default function Home() {
           </button>
         </div>
 
-        {/* Sort toggle + location error */}
+        {/* Sort toggle */}
         <div className="flex items-center gap-2 mb-4 flex-wrap">
           <div className="inline-flex rounded-lg border border-gray-200 bg-white p-0.5">
             <button
-              onClick={() => setSortMode('price')}
+              onClick={() => handleSortChange('price')}
               className={`text-xs px-3 py-1.5 rounded-md transition-colors ${
                 sortMode === 'price'
                   ? 'bg-gray-800 text-white'
@@ -226,13 +219,7 @@ export default function Home() {
               {t.priceSort}
             </button>
             <button
-              onClick={() => {
-                if (!userLoc) {
-                  requestLocation();
-                  return;
-                }
-                setSortMode('best');
-              }}
+              onClick={() => handleSortChange('best')}
               className={`text-xs px-3 py-1.5 rounded-md transition-colors ${
                 sortMode === 'best'
                   ? 'bg-gray-800 text-white'

@@ -84,8 +84,9 @@ async function mintGuestToken(origin: string, label: string): Promise<string> {
   const workerUrl = process.env.FOODSTUFFS_WORKER_URL;
   if (workerUrl) {
     try {
-      const res = await fetch(`${workerUrl}?origin=${encodeURIComponent(origin)}`, {
+      const res = await fetch(`${workerUrl}?origin=${encodeURIComponent(origin)}&_=${Date.now()}`, {
         signal: AbortSignal.timeout(12000),
+        cache: 'no-store',
       });
       if (res.ok) {
         const token = (await res.text()).trim();

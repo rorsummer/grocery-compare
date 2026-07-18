@@ -30,6 +30,7 @@ export default {
           'Accept-Language': 'en-NZ,en;q=0.9',
         },
         redirect: 'follow',
+        cf: { cacheTtl: 0 },
       });
 
       const setCookie = res.headers.get('set-cookie');
